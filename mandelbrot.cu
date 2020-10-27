@@ -45,8 +45,8 @@ void iterate_cpu(uint32_t *arr, double x, double y, double delta, uint32_t iterm
     // todo: write the CPU version of iteration
     for (int i = 0; i < LEN; i++) {
         for (int j = 0; j < LEN; j++) {
-            double ci = x + (i * delta);
-            double cj = y + (j * delta);
+            double ci = x + (j * delta);
+            double cj = y - (i * delta);
             arr[getindex(i, j)] = compute_iteration(ci, cj, itermax);
         }
     }
