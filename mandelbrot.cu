@@ -24,11 +24,33 @@ uint32_t iterscpu[LEN*LEN];
 uint32_t colors[NCOLOR+1];
 uint32_t* iters;
 
+__device__ uint32_t mandel_double(double ci, double cj, int itermax) {
+    double zr = 0;
+    double zi = 0;
+    double zrsqr = 0;
+    double zisqr = 0;
 
-int compute_iteration(double i, double j, uint32_t itermax)
+    uint32_t i;
+
+    for (i = 0; i < max_iter; i++){
+        zi = zr * zi;
+        zi += zi;
+        zi += ci;
+        zr = zrsqr - zisqr + cr;
+        zrsqr = zr * zr;
+        zisqr = zi * zi;
+        
+    //the fewer iterations it takes to diverge, the farther from the set
+        if (zrsqr + zisqr > 4.0) break;
+    }
+    
+    return i;
+}
+
+int compute_iteration(double ci, double cj, uint32_t itermax)
 {
     std::complex<double> z(0);
-    std::complex<double> c(i, j);
+    std::complex<double> c(ci, cj);
 
     int iter = 0;
     for (iter = 0; iter < itermax; iter++) {
@@ -43,23 +65,46 @@ int compute_iteration(double i, double j, uint32_t itermax)
 void iterate_cpu(uint32_t *arr, double x, double y, double delta, uint32_t itermax)
 {
     // todo: write the CPU version of iteration
-    for (int i = 0; i < LEN; i++) {
-        for (int j = 0; j < LEN; j++) {
-            double ci = x + (j * delta);
-            double cj = y - (i * delta);
-            arr[getindex(i, j)] = compute_iteration(ci, cj, itermax);
-        }
+    for (int i = 0; i < LEN * LEN; i++) {
+        int xi = i % LEN;
+        int yj = i / LEN;
+        double ci = x + (yj * delta);
+        double cj = y - (xi * delta);
+        arr[getindex(xi, yj)] = compute_iteration(ci, cj, itermax);
     }
     return;
 }
 
 __global__ void iterate_gpu(uint32_t* arr, double x, double y, double delta, uint32_t itermax){
     // todo: write the GPU kernel of iteration
+    int pix_per_thread = LEN * LEN / (gridDim.x * blockDim.x); // TODO COMPRENDRE
+    int tId = blockDim.x * blockIdx.x + threadIdx.x;         // TODO COMPRENDRE
+    int offset = pix_per_thread * tId;                       // 
+
+    for (int i = offset; i < offset + pix_per_thread; i++){ // offset
+        int xi = i % LEN;
+        int yj = i / LEN;
+        double ci = x + (yj * delta);
+        double cj = y - (xi * delta);
+        arr[getindex(xi, yj)] = mandel_double(ci, cj, itermax);
+    }
+
+    if (gridDim.x * blockDim.x * pix_per_thread < LEN * LEN && tId < (LEN * LEN) - (blockDim.x * gridDim.x)){
+        int i = blockDim.x * gridDim.x * pix_per_thread + tId; // TODO
+        int xi = i % LEN;
+        int yj = i / LEN;
+        double ci = x + (yj * delta);
+        double cj = y - (xi * delta);
+        arr[getindex(xi, yj)] = mandel_double(ci, cj, itermax);
+    }
     return;
 }
 
 void kernel_call(uint32_t* arr, double x, double y, double delta, uint32_t itermax){
     // todo: write the kernel call here, with given parameters and appropriate thread grid configurations
+    //iterate_gpu<<<(LEN*LEN), 1024, 0 >>>(arr, x, y, delta, itermax);
+    iterate_gpu<<<1024, 1024, 0>>>(arr, x, y, delta, itermax);
+    cudaDeviceSynchronize();
     return;
 }
 
@@ -74,25 +119,25 @@ void generate_colors(const SDL_PixelFormat* format){
         int t = (int)(255*(0.25f + f*0.75f));
         switch(ph){
             case 0:
-                colors[i] = SDL_MapRGB(format, v, t, p);
-                break;
+            colors[i] = SDL_MapRGB(format, v, t, p);
+            break;
             case 1:
-                colors[i] = SDL_MapRGB(format, q, v, p);
-                break;
+            colors[i] = SDL_MapRGB(format, q, v, p);
+            break;
             case 2:
-                colors[i] = SDL_MapRGB(format, p, v, t);
-                break;
+            colors[i] = SDL_MapRGB(format, p, v, t);
+            break;
             case 3:
-                colors[i] = SDL_MapRGB(format, p, q, v);
-                break;
+            colors[i] = SDL_MapRGB(format, p, q, v);
+            break;
             case 4:
-                colors[i] = SDL_MapRGB(format, t, p, v);
-                break;
+            colors[i] = SDL_MapRGB(format, t, p, v);
+            break;
             case 5:
-                colors[i] = SDL_MapRGB(format, v, p, q);
-                break;
+            colors[i] = SDL_MapRGB(format, v, p, q);
+            break;
             default:
-                break;
+            break;
         }
         h += 360.0/NCOLOR;
     }
@@ -108,40 +153,40 @@ int main(int argc, char** argv){
     }
     uint32_t* gpuarray;
     uint32_t* hostarray;
-    
+
     // Initialize SDL
     if( SDL_Init(SDL_INIT_VIDEO) < 0 ) {
         fprintf(stderr, "Couldn't initialize SDL: %s\n", SDL_GetError());
         exit(1);
     }
-	atexit(SDL_Quit);
+    atexit(SDL_Quit);
     // Create window
-	screen = SDL_CreateWindow("Mandelbrot", 
-                        SDL_WINDOWPOS_UNDEFINED,
-                        SDL_WINDOWPOS_UNDEFINED,
-                        LEN, LEN, SDL_WINDOW_SHOWN);
+    screen = SDL_CreateWindow("Mandelbrot", 
+        SDL_WINDOWPOS_UNDEFINED,
+        SDL_WINDOWPOS_UNDEFINED,
+        LEN, LEN, SDL_WINDOW_SHOWN);
     if ( screen == NULL ) {
         fprintf(stderr, "Couldn't set up window: %s\n", SDL_GetError());
         exit(1);
     }
-    
+
     // Initialize CUDA
     if(usegpu){
         cudaSetDeviceFlags(cudaDeviceScheduleBlockingSync);
         cudaMalloc((void**)&gpuarray, LEN*LEN*sizeof(uint32_t));
         cudaHostAlloc((void**)&hostarray, LEN*LEN*sizeof(uint32_t), cudaHostAllocDefault);
     }
-    
+
     // Create renderer and texture
     SDL_PixelFormat* fmt = SDL_AllocFormat(SDL_PIXELFORMAT_RGBA32);
     generate_colors(fmt);
     ren = SDL_CreateRenderer(screen, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     tex = SDL_CreateTexture(ren, fmt->format, SDL_TEXTUREACCESS_STREAMING, LEN, LEN);
-    
+
     // Timing
     float totaltime = 0.0f;
     uint32_t frames = 0;
-    
+
     // Window for Mandelbrot
     double targetx = -0.743643887037158704752191506114774;
     double targety = 0.131825904205311970493132056385139;
@@ -151,7 +196,7 @@ int main(int argc, char** argv){
     const double scale = 0.94;
     uint32_t itermax = 32;
     const uint32_t iterstep = 8;
-    
+
     while(true){
         bool flag = false;
         while(SDL_PollEvent(&e)){
@@ -173,16 +218,16 @@ int main(int argc, char** argv){
             cudaDeviceSynchronize();
             iters = hostarray;
         }
-        
+
         int len = LEN;
         uint32_t* surf = NULL;
         SDL_LockTexture(tex, NULL, (void**)(&surf), &len);
         for(uint32_t i=0; i<LEN*LEN; i++){
-                if (iters[i] < itermax){
-                    surf[i] = colors[iters[i]&NCOLORMASK];
-                }else{
-                    surf[i] = colors[NCOLOR];
-                }
+            if (iters[i] < itermax){
+                surf[i] = colors[iters[i]&NCOLORMASK];
+            }else{
+                surf[i] = colors[NCOLOR];
+            }
         }
         SDL_UnlockTexture(tex);
         SDL_RenderClear(ren);
@@ -200,7 +245,7 @@ int main(int argc, char** argv){
         frames++;
         if(frames>=530) break;
     }
-    
+
     char s[100];
     sprintf(s, "Average FPS: %.1f\nFrame count: %u", frames/totaltime, frames);
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Benchmark", s, screen);
