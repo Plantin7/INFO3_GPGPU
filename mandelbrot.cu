@@ -32,11 +32,11 @@ __device__ uint32_t mandel_double(double ci, double cj, int itermax) {
 
     uint32_t i;
 
-    for (i = 0; i < max_iter; i++){
+    for (i = 0; i < itermax; i++){
         zi = zr * zi;
         zi += zi;
-        zi += ci;
-        zr = zrsqr - zisqr + cr;
+        zi += cj;
+        zr = zrsqr - zisqr + ci;
         zrsqr = zr * zr;
         zisqr = zi * zi;
         
