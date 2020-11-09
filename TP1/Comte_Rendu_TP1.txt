@@ -1,0 +1,37 @@
+Report 1 : Test and Pracice 1 - Basics
+
+Exercice 1 : OK
+Exercice 2 :
+ Describe what you saw and explain it using the relations between blocks, warps and threads.
+
+A kernel is defined using the __global__ declaration, and the number of CUDA threads that run that kernel for a given kernel call is specified using the <<< ... >>> runtime syntax.
+Each thread that runs the kernel is assigned a unique thread ID accessible in the kernel.
+
+A block is made up of grid and a grid is made up of thread. 
+When we had to call kernel methods we had to split the threads into thread blocks and the thread blocks into grids. 
+This will allocate the thread blocks to streaming multiprocessors (SM). 
+After a thread block is distributed to an SM, the resources for the thread block are allocated (warps and shared memory) and the threads are divided into groups of 32 threads called warps.
+
+Therefore when we call a kernel method, we must define 3 arguments :
+-> the number of blocks, the number of threads and the last parameter is unknown for the moment of this exercice.
+
+Exercice 3 :
+
+The demo2 work partialty because, because the is a limit to the number of threads per block, because all threads in a block must reside on the same processor core and
+must share the limited memory resources of this core.
+On current GPUs, a thread block can contain up to 1024 threads, and that why the the second part doesn't work because 
+the number of thread is higher than 1024 and the block cannot support more than 1024 threads.
+
+Probleme 1 :
+
+I performed two functions to perform the iteration calculations via the gpu, 
+one using the thrust api for complex numbers and one doing the complex numbers by hand. 
+Comparing the version made by hand is faster than the one using the Thrust API, surely due to this overlay.
+Trust API = average frame 0.9
+Hand      = average frame 2.7
+
+The GPU version should terminate automatically in at most 5 minutes.  What do you observe at theend? Explain your observation.
+At the end of 5 minutes the pixels are distorted, because I think we hit the resolution limit by using a double type for the data and the whole plot will become tending to a single color.
+
+
+

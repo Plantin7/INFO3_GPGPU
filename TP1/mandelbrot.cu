@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <complex>
+#include <thrust/complex.h>
 
 #define LEN 1024
 #define LENSHIFT 10
@@ -15,95 +16,145 @@
 #define NCOLOR 64
 #define NCOLORMASK 63
 
-SDL_Window *screen;
+SDL_Window   *screen;
 SDL_Renderer *ren;
-SDL_Texture *tex;
-SDL_Surface *mysurf;
+SDL_Texture  *tex;
+SDL_Surface  *mysurf;
 
 uint32_t iterscpu[LEN*LEN];
 uint32_t colors[NCOLOR+1];
 uint32_t* iters;
 
-__device__ uint32_t mandel_double(double ci, double cj, int itermax) {
-    double zr = 0;
-    double zi = 0;
-    double zrsqr = 0;
-    double zisqr = 0;
 
-    uint32_t i;
+/* 
+    ---- Kernel definition ----
+    This method does exactly the same as the CPU method
+    This method is used to determine whether a value is in or out of the Mandelbrot set. 
+    We run through the formula Zn + 1 = Zn ^ 2 + C up to itermax (this is the depth of the previous image) 
+    and at each iteration, we check if the real and imaginary part of Z is greater than 2; 
+    if this happens we return the last iteration (which will give the color of the corresponding pixel).
+    So we'll return the iteration in which it went out of bounds, and then interpret this number as a color. 
+    If it completes the loop without going out of bounds, we will give it the color black
+*/   
+__device__ uint32_t compute_iteration_gpu(double ci, double cj, uint32_t itermax) 
+{
+    // We cannot use the complexe number of std, so we programming it manually
+    double zRe = 0;     // real number     
+    double zIm = 0;     // imaginary number
+    
+    double zReRes = 0;  
+    double zImRes = 0;
 
-    for (i = 0; i < itermax; i++){
-        zi = zr * zi;
-        zi += zi;
-        zi += cj;
-        zr = zrsqr - zisqr + ci;
-        zrsqr = zr * zr;
-        zisqr = zi * zi;
+    uint32_t iter = 0; // iteration
+
+    for (iter = 0; iter < itermax; iter++){ 
+        // Compute the new imaginary and real part of Z 
+        zIm =  zRe * zIm;
+        zIm += zIm + cj;
+
+        zRe = zReRes - zImRes + ci;
+        zReRes = zRe * zRe;
+        zImRes = zIm * zIm;
         
-    //the fewer iterations it takes to diverge, the farther from the set
-        if (zrsqr + zisqr > 4.0) break;
+        if (zReRes + zImRes >= 4.0) break; // greater than 2, so the value is out of the Mandelbrot set
     }
     
-    return i;
+    return iter;
 }
 
-int compute_iteration(double ci, double cj, uint32_t itermax)
+/* 
+  OLD METHOD :
+  The compute_iteration_gpu method is similar to the compute_iteration_cpu method.
+  using thrust api !
+*/
+
+/*__device__ uint32_t compute_iteration_gpu(double ci, double cj, uint32_t itermax) 
 {
+    thrust::complex<double> z(0);
+    thrust::complex<double> c(ci, cj);
+
+    uint32_t iter = 0;
+    for (iter = 0; iter < itermax; iter++) {
+        z = (z * z) + c;
+        if(abs(z) >= 2) break;
+    }
+    return iter;
+}
+*/
+
+/* 
+    CPU Version
+    This method is used to determine whether a value is in or out of the Mandelbrot set. 
+    We run through the formula Zn + 1 = Zn ^ 2 + C up to itermax (this is the depth of the previous image) 
+    and at each iteration, we check if the real and imaginary part of Z is greater than 2; 
+    if this happens we return the last iteration (which will give the color of the corresponding pixel).
+    So we'll return the iteration in which it went out of bounds, and then interpret this number as a color. 
+    If it completes the loop without going out of bounds, we will give it the color black
+*/ 
+
+int compute_iteration_cpu(double ci, double cj, uint32_t itermax)
+{
+    // use complex type for complexe number from std
     std::complex<double> z(0);
     std::complex<double> c(ci, cj);
 
-    int iter = 0;
+    uint32_t iter = 0;
     for (iter = 0; iter < itermax; iter++) {
+        // Compute the new imaginary and real part of Z 
         z = (z * z) + c;
-        if(abs(z) >= 2) {
-            break;
-        }
+        if(abs(z) >= 2) break; // greater than 2, so the value is out of the Mandelbrot set
     }
     return iter;
 }
 
+/*
+    Mandelbrot using CPU
+    This function compute all iteration of complexe number, for each pixel i and j and stock the result into the arr.
+    X and Y parameter corresponds to the starting point of the iteration, i.e. at the top left of the screen (coordinate (0, 0))
+    The parameter delta is used to know the next pixel to compute the itération.
+    The variable itermax (1024) is there to give the maximum depth to calculate for the image
+*/
 void iterate_cpu(uint32_t *arr, double x, double y, double delta, uint32_t itermax)
 {
-    // todo: write the CPU version of iteration
     for (int i = 0; i < LEN * LEN; i++) {
-        int xi = i % LEN;
-        int yj = i / LEN;
+        int xi = i % LEN;                   // index i, 0 to 1023, avoid to used two loop
+        int yj = i / LEN;                   // index j, 0 to 1023, avoid to used two loop
         double ci = x + (yj * delta);
         double cj = y - (xi * delta);
-        arr[getindex(xi, yj)] = compute_iteration(ci, cj, itermax);
+        arr[getindex(xi, yj)] = compute_iteration_cpu(ci, cj, itermax); // compute itération 
     }
     return;
 }
+
+/*
+    ---- Kernel definition ----
+    Mandelbrot using GPU
+    Unlike the CPU method, we do not need to do a loop, 
+    because it is handled by the threads of each grid, one thread will take care of the calculation for each iteration.
+    X and Y parameter corresponds to the starting point of the iteration, i.e. at the top left of the screen (coordinate (0, 0))
+    The parameter delta is used to know the next pixel to compute the itération.
+    The variable itermax (1024) is there to give the maximum depth to calculate for the image
+*/
 
 __global__ void iterate_gpu(uint32_t* arr, double x, double y, double delta, uint32_t itermax){
-    // todo: write the GPU kernel of iteration
-    int pix_per_thread = LEN * LEN / (gridDim.x * blockDim.x); // TODO COMPRENDRE
-    int tId = blockDim.x * blockIdx.x + threadIdx.x;         // TODO COMPRENDRE
-    int offset = pix_per_thread * tId;                       // 
+    int tId = blockDim.x * blockIdx.x + threadIdx.x ;                      
 
-    for (int i = offset; i < offset + pix_per_thread; i++){ // offset
-        int xi = i % LEN;
-        int yj = i / LEN;
-        double ci = x + (yj * delta);
-        double cj = y - (xi * delta);
-        arr[getindex(xi, yj)] = mandel_double(ci, cj, itermax);
-    }
-
-    if (gridDim.x * blockDim.x * pix_per_thread < LEN * LEN && tId < (LEN * LEN) - (blockDim.x * gridDim.x)){
-        int i = blockDim.x * gridDim.x * pix_per_thread + tId; // TODO
-        int xi = i % LEN;
-        int yj = i / LEN;
-        double ci = x + (yj * delta);
-        double cj = y - (xi * delta);
-        arr[getindex(xi, yj)] = mandel_double(ci, cj, itermax);
-    }
+    int xi = tId % LEN;             // index i, 0 to 1023
+    int yj = tId / LEN;             // index j, 0 to 1023
+    double ci = x + (yj * delta);
+    double cj = y - (xi * delta);
+    arr[getindex(xi, yj)] = compute_iteration_gpu(ci, cj, itermax); // compute the iteration
+    
     return;
 }
 
+/*
+    This function call the kernel method (using __global___)
+*/
 void kernel_call(uint32_t* arr, double x, double y, double delta, uint32_t itermax){
-    // todo: write the kernel call here, with given parameters and appropriate thread grid configurations
-    //iterate_gpu<<<(LEN*LEN), 1024, 0 >>>(arr, x, y, delta, itermax);
-    iterate_gpu<<<1024, 1024, 0>>>(arr, x, y, delta, itermax);
+    uint32_t thread_max = 1024;                                                  // number max of thread per grid
+    int number_of_blocks = ceil((LEN*LEN)/thread_max);                           // calculate ideal number grid based on screen size
+    iterate_gpu<<<number_of_blocks, thread_max, 0>>>(arr, x, y, delta, itermax); // Kernel invocation with 1024 threads
     cudaDeviceSynchronize();
     return;
 }
