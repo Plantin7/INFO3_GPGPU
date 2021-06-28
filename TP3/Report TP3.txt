@@ -1,0 +1,148 @@
+Test and Practice 3 - Synchronization andPerformance
+
+Exercise 1: Why not working ?
+
+Chaos1.cu :
+The problem we have encountered is that each time we launch our program we have different results from one execution to another 
+and the calculation time varies from one execution to another.
+This is a concurrency problem (i.e a data race) that we find in the triangleNumber(...) function, which must calculate the sum of all integers from 0 to n-1.
+We use += as operators to calculate the sum, however this operation is not atomic (it takes several assembly instructions). 
+Therefore, the values ​​read by threads may differ from one thread to another, causing these different results.
+To correct this problem, we use the atomicAdd (...) function which ensures that this operation is performed indivisibly (a single assembler instruction).
+
+Chaos2 :
+The problem we encountered when running this program is that the program displays the message "Error on entry 'Value'" multiple times. 
+This error comes from the build_lookup () method. When we check the lookup array, each thread checks if all the other threads have correctly filled its part of the array. 
+If this is not the case then this error message appears. 
+To correct this problem we use the _syncthread () method (we set it just before this check) which will wait until all the threads of the same block have finished filling its lookup array part. 
+This ensures that this table will be fully populated and that no data will be missing.
+
+
+Exercice 2 : We don’t have time!
+
+We have 4 different functions for searching a number in a list, here they are:
+
+Search_1 : 
+First observation, this search method, returns 0 if the element searched is not present otherwise the number of occurrences present in the array.
+If we look in more detail in the code, each thread (unique tid) of each block searches all the occurences of the element present in the array (as long as the tid of the thread is less than the size of the array).
+This function uses the __shfl_down_sync () method to calculate the counter by shaft reduction in a single warp (warp-level parallel reduction).
+The idea is that the result obtained from each warp is added to our local count variable in order to obtain the number of occurrences found in each warp. 
+Finally, an atomicAdd is made to be sure that the last value read is the correct one because there is a data race on the variable res
+This function is the search function comparing with the other methods. (5.8ms to 6.4ms in average) because it finds all the occurrences of an element in an array.
+Maybe it's slower because waiting for all threads in each wrap calculates the number of occurrences is slow.
+
+Search_2 :
+First observation, this search method, returns 0 if the element searched is not present otherwise the number of occurrences that he found in the array.
+If we look in more detail in the code, each thread (unique tid) of each block searches if the element is present in the array (as long as the tid of the thread is less than the size of the array).
+Unlike the Search 3 function, this function will use a __any_sync method to check if the element is present. 
+This method will evaluate a predicate (which is whether the item is present) for all running threads. 
+It will return non-zero if the predica returns non-zero for any active threads.
+If a thread among all the threads of a warp finds the sought element then all the threads of this warp will stop, this is what the any-sync method does. 
+If we look at the results we notice that it does not find the same result as the other functions because the threads of a warp stopped before finding the element.
+
+Search_3 :
+First observation, this search method, returns 0 if the element searched is not present otherwise the number of occurrences present in the array.
+If we look in more detail in the code, each thread (unique tid) of each block searches if the element is present in the array (as long as the tid of the thread is less than the size of the array).
+Each thread of each block of this function will iterate through the entire array, and if a thread finds the element, then that thread increments the variable res. 
+However, this variable is a data race because several threads read and write to this variable, 
+which is why we use the atomicAdd method to perform this operation without concurrency problem. 
+This method is slow because it has to iterate over the array each time. 
+In terms of performance it takes for each test between 5.6 and 5.8 ms.
+
+Search_4 :
+First observation, this search method, returns 0 if the element searched is not present and 1 if the element is found. 
+If we look in more detail in the code, each thread (unique tid) of each block searches if the element is present in the array (as long as the tid of the thread is less than the size of the array and that res == 0) . 
+When a thread finds the element in question, it will stop all the others which were also browsing this array (the variable res has been set). 
+If the element is not present, the function will check each element of the array. 
+In terms of performance, this method is faster than the others on condition that the value sought is present in the table, otherwise the performance is equivalent than the other functions, or even slightly slower.
+As you can see in the annex, shift 12 takes 0.4986ms, and the other methods take an average of 6 seconds while for shift 32 all the methods take an average of 5.6ms
+
+
+problème : 
+
+This problem is about the Pagerank algorithm that is used by Google to measure the popularity of a website. The websites are represented in an oriented graph within the algorithm.
+Each node of the graph represents a website and each arrow represents the hyperlinks. Each time we cross a link we iterate on this algorithm. Since in a graph there is not "a first node", the probability of entering a node in the very first iteration is equivalent for all nodes.
+
+6) When we compare the results we realized the order of the results between the gpu and cpu version are not the same.
+
+7) Check the result obtains in annex.
+
+Annex Search.cu result : 
+
+Shift 12, with 32660 elements equal to 42 to be found
+Method 1:  6.4680ms, found, returning 32660.
+Method 2:  6.0537ms, found, returning 32553.
+Method 3:  5.8573ms, found, returning 32660.
+Method 4:  0.4986ms, found, returning 1.
+
+Shift 16, with 2097 elements equal to 42 to be found
+Method 1:  5.7695ms, found, returning 2097.
+Method 2:  5.6904ms, found, returning 2095.
+Method 3:  5.6218ms, found, returning 2097.
+Method 4:  0.4238ms, found, returning 1.
+
+Shift 20, with 123 elements equal to 42 to be found
+Method 1:  5.8083ms, found, returning 123.
+Method 2:  5.7592ms, found, returning 123.
+Method 3:  5.7042ms, found, returning 123.
+Method 4:  0.7586ms, found, returning 1.
+
+Shift 24, with 8 elements equal to 42 to be found
+Method 1:  5.7486ms, found, returning 8.
+Method 2:  5.6986ms, found, returning 8.
+Method 3:  5.6373ms, found, returning 8.
+Method 4:  0.7455ms, found, returning 1.
+
+Shift 28, with 0 elements equal to 42 to be found
+Method 1:  5.7894ms, not found, returning 0.
+Method 2:  5.7011ms, not found, returning 0.
+Method 3:  5.6735ms, not found, returning 0.
+Method 4:  5.6941ms, not found, returning 0.
+
+Shift 32, with 0 elements equal to 42 to be found
+Method 1:  5.7636ms, not found, returning 0.
+Method 2:  5.6758ms, not found, returning 0.
+Method 3:  5.6566ms, not found, returning 0.
+Method 4:  5.6447ms, not found, returning 0.
+
+
+7)
+GPU version, runtime  5.2663s
+Deviation: 0.892191
+Rank 0, index 763, normalized pagerank 0.0032494
+Rank 1, index 864, normalized pagerank 0.0027793
+Rank 2, index 532, normalized pagerank 0.0025902
+Rank 3, index 958, normalized pagerank 0.0025139
+Rank 4, index 11, normalized pagerank 0.0024818
+Rank 5, index 413, normalized pagerank 0.0024558
+Rank 6, index 449, normalized pagerank 0.0024518
+Rank 7, index 643, normalized pagerank 0.0022803
+Rank 8, index 679, normalized pagerank 0.0022251
+Rank 9, index 862, normalized pagerank 0.0022205
+Rank 10, index 244, normalized pagerank 0.0021892
+Rank 11, index 776, normalized pagerank 0.0020476
+Rank 12, index 98, normalized pagerank 0.0020310
+Rank 13, index 502, normalized pagerank 0.0020267
+Rank 14, index 913, normalized pagerank 0.0020252
+Rank 15, index 612, normalized pagerank 0.0019415
+
+CPU version, runtime 20.0000s
+Deviation: 0.892561
+Rank 0, index 763, normalized pagerank 0.0032497
+Rank 1, index 864, normalized pagerank 0.0027795
+Rank 2, index 532, normalized pagerank 0.0025904
+Rank 3, index 958, normalized pagerank 0.0025142
+Rank 4, index 11, normalized pagerank 0.0024821
+Rank 5, index 413, normalized pagerank 0.0024561
+Rank 6, index 449, normalized pagerank 0.0024521
+Rank 7, index 643, normalized pagerank 0.0022805
+Rank 8, index 679, normalized pagerank 0.0022253
+Rank 9, index 862, normalized pagerank 0.0022208
+Rank 10, index 244, normalized pagerank 0.0021894
+Rank 11, index 776, normalized pagerank 0.0020478
+Rank 12, index 98, normalized pagerank 0.0020312
+Rank 13, index 502, normalized pagerank 0.0020269
+Rank 14, index 913, normalized pagerank 0.0020254
+Rank 15, index 612, normalized pagerank 0.0019417
+
+

@@ -1,0 +1,101 @@
+Test and Practice * - Sorting
+
+The goal of this lab is to implement the radix sorting algorithm on the GPU.
+This report will explain to you how this practical work was carried out, what was understood, the difficulties encountered as well as what was not successful.
+
+1st thing to say, this TP was very hard for me. I spent a lot of time on it.
+To help me understand and finally realize my implementation, I used a series of videos on the internet to help me:
+here they are :
+
+Explication of radix sort : https://www.youtube.com/watch?v=dPwAA7j-8o4
+Explication of blelloch scan : https://www.youtube.com/watch?v=mmYv3Haj6uc
+Another explication: least significant bit the + result of bleloch scan = https://www.youtube.com/watch?v=iS0S7F2U4-o
+Inpiration of code to implement the blelloch scan : https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
+Also to help me with the compression of the algortihm and during my developments, I made a small-radix-sort.cu test file on an array of size 8 with debug messages (you can this program into my zip)
+
+I'll explain how my program was implemented and explain the radix sort algorithm : 
+
+My program takes as input an integer n and generate a random array of 2 ^ n elements it is this array of uint_64 that we want to sort.
+(In the sort-gpu file there are commented lines to display the sorting of the arrays. You just need to remove them.)
+
+The idea of ​​the radix is ​​that we are going to look bit by bit at each value of our generated array. 
+Since a uint64 is encoded on 8 bytes, there are therefore 64 bits to check per value in the array.
+
+We look the least significant bit if it is 0 or 1 we will generate two arrays. 
+An array containing the least significant bits and another in which there is an inverted bits array. 
+In addition when we listen to the number of 1 present among the least significant bit of all the values ​​of the array
+Exemple : 
+        value       arr1   arr2 
+	0; // 000 -> 0   | 1
+	5; // 101 -> 1   | 0
+	2; // 010 -> 0   | 1
+	7; // 111 -> 1   | 0   
+	1; // 001 -> 1   | 0 
+	3; // 011 -> 1   | 0
+	6; // 110 -> 0   | 1
+	4; // 100 -> 0   | 1
+
+number of ones = 4
+
+Why we are doing this is because we need to know the new position of the values ​​for this iteration, before moving on to the next bit. 
+To know the position of each of the values ​​we use the blelloch scan algorithm which will generate an array containing the position of the values ​​in order to keep and guarantee the order (from the two generated bit array)
+Belolloch scan is a simple and common parallel algorithm building block is the all-prefix-sums operation. 
+
+Exemple : 
+	scan	arr2
+	  0   | 1 -> Pos 0 in the array for the value 0
+	  1   | 0
+	  1   | 1 -> pos 1 in the array for the value 2
+	  2   | 0   
+	  2   | 0 
+	  2   | 0
+	  2   | 1 -> pos 2 in the array for the value 6
+	  3   | 1 -> pos 3 in the array for the value 4
+
+
+And finally we call a method which rearranges the array in order to position the right values ​​in the right places of the array
+We repeat this 64 times and so the values ​​in the array will go back and forth before they get sorted.
+
+After carrying out tests here are the results obtained :
+[DEBUG] - Entered Number : 25
+[DEBUG] - Producing array of 33554432 ununsigned 64bit integers
+[DEBUG] - Generating Random Array ...
+[DEBUG] - Generating Random Array...DONE
+
+[DEBUG] - CPU version : Sorting Array
+CPU version, runtime 10.0580 s
+
+[DEBUG] - GPU version : Sorting Array
+GPU version, runtime 10.0790 s
+-------------------------------------------------------------------
+[DEBUG] - Entered Number : 28
+[DEBUG] - Producing array of 268435456 ununsigned 64bit integers
+[DEBUG] - Generating Random Array ...
+[DEBUG] - Generating Random Array...DONE
+
+[DEBUG] - CPU version : Sorting Array
+CPU version, runtime 102.4920 s
+
+[DEBUG] - GPU version : Sorting Array
+GPU version, runtime -0.0000 s
+
+------------------------------------------------------------------
+
+C:\Users\vince\OneDrive\Bureau\3eme année\Gpgpu\INFO3_GPGPU\TP4>sort-gpu.exe 26
+[DEBUG] - Entered Number : 26
+[DEBUG] - Producing array of 67108864 ununsigned 64bit integers
+[DEBUG] - Generating Random Array ...
+[DEBUG] - Generating Random Array...DONE
+
+[DEBUG] - CPU version : Sorting Array
+CPU version, runtime 21.8600 s
+
+[DEBUG] - GPU version : Sorting Array
+GPU version, runtime 20.3400 s
+
+-----------------------------------------------------------------
+
+As you can see the results are pretty good but when I reach 2 ^ 28 the radix comes out no longer works. 
+I think that I did not manage the paralelization of the threads which means that I do not obtain a result and this is the main difficulty that I encountered, 
+it is to parallelize the method calls to obtain a more code efficient.
+

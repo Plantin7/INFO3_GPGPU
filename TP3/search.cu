@@ -53,6 +53,7 @@ __global__ void search_4(const uint32_t* arr, uint32_t size, uint32_t* res, uint
     if(*res != 0) return;
     uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
     uint32_t gridsize = blockDim.x * gridDim.x; // number of thread in grid 
+    
 	while((tid < size) && (*res == 0)){
         if(arr[tid] == val) { 
             (*res)++; 

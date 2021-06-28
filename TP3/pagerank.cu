@@ -14,48 +14,165 @@
 #define MAXPRCOUNT 16
 #define INITPROJ 1024
 
+#define ITERATION (COUNT*LINK_PER_PAGE)
+
 /* ------------ Pagerank computation, GPU part ------------ */
 
+  // TODO: fill in initial value for pagerank
+  // Each thread, Initialize oldp array (length COUNT) with 1/COUNT for each element.
+
 __global__ void pr_init_gpu(float* pr){
-    // TODO: fill in initial value for pagerank
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if(tid < COUNT) {
+        pr[tid] = 1 / static_cast<float>(COUNT);
+    }
 }
 
-__global__ void pr_damping_gpu(float* pr){
-    // TODO: fill in (1 - damping constant) for pagerank
+// Each thread, Initialize newp array (length COUNT) with (1-DAMPING)/COUNT for each element.
+__global__ void pr_damping_gpu(float* pr){ 
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if(tid < COUNT) {
+        pr[tid] = (1 - DAMPING)/ static_cast<float>(COUNT);
+    }
 }
 
+//  Add the contribution of hyperlinks to each element of the newp array
 __global__ void pr_iter_gpu(const uint2* links, const float* oldp, float* newp){
     // TODO: add contributions for each link for pagerank
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if(tid < ITERATION) {                                           // LINK_PER_PAGE*COUNT
+        float val = DAMPING * oldp[links[tid].x] / LINK_PER_PAGE;   // new val computed
+        atomicAdd(&newp[links[tid].y], val);                        // data race on the array, so we need to use atomic add() (on assembly instruction)
+    }
 }
 
+// Check the convergence of each pairs : differences  of  all  pairs  of oldp[i] and newp[i] are  smaller  than EPSILON
 __global__ void pr_conv_check_gpu(const float* oldp, const float* newp, uint32_t* conv){
-    // TODO: check for convergence against 
+    int t_idx = blockDim.x * blockIdx.x + threadIdx.x;
+    *conv = 0;                                                       // if the diff doesn't converge we change the convergance (*conv) to 1
+    if(t_idx < COUNT && fabs(oldp[t_idx] - newp[t_idx]) > EPSILON) { // fabs = float absolute()
+        *conv = 1;
+    }
+
+    // int hasNotConverged = fabs(oldp[t_idx] - newp[t_idx]) > EPSILON ? 1 : 0;
+    // if(__any_sync(0xffffffff, hasNotConverged)) { // if one pair doesn't among each pairs converge return 
+    //     return;
+    // }
+    // *conv = 0;
+
+    // int hasConverged = fabs(oldp[t_idx] - newp[t_idx]) <= EPSILON ? 1 : 0; // if all pairs converge set conv to 0
+    // if(__all_sync(0xffffffff, hasConverged)) {
+    //     *conv = 0;
+    // }
 }
 
+// control GPU computation, returns computation time (in seconds, not counting memory transfer time)
 float pr_compute_gpu(const uint2* links, float* pr){
-    // TODO: control GPU computation, returns computation time (in seconds, not counting memory transfer time)
+    cuStopwatch time;
+    float* oldp;
+    float* newp;
+    uint32_t* conv_device;
+
+    // Allocate arrays and conv_device variable in the device memory
+    cudaMalloc((void**)&oldp, sizeof(float)*COUNT);
+    cudaMalloc((void**)&newp, sizeof(float)*COUNT);
+    cudaMalloc((void**)&conv_device, sizeof(uint32_t));
+
+
+    int nb_thread = (1<<10);                     // number of max thread per grid (1024) 
+    int nb_block = ceil(COUNT/nb_thread);        // calculate the right number of blocks to have one thread per page
+
+    time.start();                                // start the timer
+
+    pr_init_gpu<<< nb_block, nb_thread>>>(oldp); // initialize oldp array 
+
+    uint32_t conv = 1;
+    cudaMemcpyAsync(conv_device, &conv, sizeof(uint32_t), cudaMemcpyHostToDevice); 
+
+    while(true){
+        pr_iter_gpu<<<nb_block*LINK_PER_PAGE, nb_thread>>>(links, oldp, newp);          // contribution of hyperlinks to each element of the array newp   
+        pr_conv_check_gpu<<<nb_block, nb_thread>>>(oldp, newp, conv_device);            // check all pairs for compute the convergence :  newp[i] oldp[i]
+        cudaMemcpyAsync(&conv, conv_device, sizeof(uint32_t), cudaMemcpyDeviceToHost);  // put conv_device value in conv
+
+        if(conv == 0){
+            break;
+        }
+        cudaMemcpy(oldp, newp, sizeof(float)*COUNT, cudaMemcpyDeviceToDevice);  // put newp value in oldp
+        pr_damping_gpu<<<nb_block, nb_thread>>>(newp);                          // initialize newp array : Step 2 of the algorithm
+    }
+    float result = time.stop()/1000;                                            // finish the timer
+    cudaMemcpy(pr, newp, sizeof(float)*COUNT, cudaMemcpyDeviceToHost);          // pr point to newp (host array with computed pageranks)
+
+    // Free the device memory in this scope
+    cudaFree(oldp);
+    cudaFree(newp);
+    cudaFree(conv_device);
+
+    return result;
 }
 
 /* ------------ Pagerank computation, CPU part ------------ */
 
-__global__ void pr_init_cpu(float* pr){
+// Like the GPU version, each thread, Initialize oldp array (length COUNT) with 1/COUNT for each element.
+void pr_init_cpu(float* pr){
     // TODO: equivalence of pr_init_gpu on host
+    for (int i = 0; i < COUNT; i++){
+        pr[i] = 1 / static_cast<float>(COUNT);
+    }
 }
 
-__global__ void pr_damping_cpu(float* pr){
-    // TODO: equivalence of pr_damping_gpu on host
+// Like the GPU version, each thread, Initialize newp array (length COUNT) with (1-DAMPING)/COUNT for each element.
+void pr_damping_cpu(float* pr){
+    // TODO: equivalence of pr_damping_gpu on host 
+    for (int i = 0; i < COUNT; i++){
+        pr[i] = (1 - DAMPING)/ static_cast<float>(COUNT);
+    }
 }
 
+// Like the GPU version, add the contribution of hyperlinks to each element of the newp array
 void pr_iter_cpu(const uint2* links, const float* oldp, float* newp){
     // TODO: equivalenc of pr_iter_gpu on host
+    for (int i = 0; i < ITERATION; i++) {                               // COUNT * LINK_PER_PAGE
+        newp[links[i].y] += DAMPING * (oldp[links[i].x] / LINK_PER_PAGE);
+    }
 }
 
+// Like the GPU version, we check the convergence of each pairs : differences  of  all  pairs  of oldp[i] and newp[i] are  smaller  than EPSILON
 void pr_conv_check_cpu(const float* oldp, const float* newp, uint32_t* conv){
     // TODO: equivalence of pr_conv_check_gpu on host
+    for (int i = 0; i < COUNT; i++) {
+        float val1 = oldp[i];
+        float val2 = newp[i];
+        if(abs((val1 - val2)) > EPSILON){ // Check  if  the  differences  of  all  pairs  of oldp [i] and newp[i] are smaller than EPSILON
+            return;                 
+        }
+    }               
+    *conv = 0;                      // stop condition, all pairs converged // all the value are less than EPSILON
 }
 
 float pr_compute_cpu(const uint2* links, float* pr){
     // TODO: equivalence of pr_compute_gpu on host
+    float* oldp;
+    cudaHostAlloc((void**)&oldp, sizeof(float)*COUNT, cudaHostAllocDefault);
+
+    clock_t time = clock();         // start clock
+
+    pr_init_cpu(oldp);              // initialize oldp array 
+    pr_damping_cpu(pr);             // initialize pr array
+
+    uint32_t conv = 1;
+    while(true){  
+        pr_iter_cpu(links, oldp, pr);           // calculate the contribution for each webpage
+        pr_conv_check_cpu(oldp, pr, &conv);     // check if the pairs oldpr[i] and newpr[i] converge
+        if(conv == 0){                          // quit the loop, the convergence is reached.
+            break;
+        }
+        memcpy(oldp, pr, sizeof(float)*COUNT); // copy the oldp in pr array
+        pr_damping_cpu(pr);                    // initialise pr array
+    }
+
+    cudaFreeHost(oldp);
+    return (clock() - time)/CLOCKS_PER_SEC ; // stop clock
 }
 
 /* ------------ Random graph generation ------------ */
@@ -187,3 +304,34 @@ int main(){
     cudaFreeHost(pagerank);
 	return 0;
 }
+
+
+/*void pr_iter_cpu(const uint2* links, const float* oldp, float* newp){
+    // TODO: equivalenc of pr_iter_gpu on host
+    for (int i = 0; i < COUNT; i++) {
+        // int from = links[i].x;
+        float compute_current_element = 0.0;
+
+        for(int j = links[i].x ; j < links[i].y ; j++) { 
+            compute_current_element += oldp[j] / LINK_PER_PAGE; // there is 4
+        }
+
+        newp[links[i].y] = (1 - DAMPING)/ static_cast<float>(COUNT) + DAMPING * compute_current_element;
+    }
+}*/
+
+/*void pr_iter_cpu(const uint2* links, const float* oldp, float* newp){
+    // TODO: equivalenc of pr_iter_gpu on host
+    for (int i = 0; i < COUNT; i++) {
+        // int from = links[i].x;
+        float compute_current_element = 0.0;
+
+        for(int j = 0; j < ITERATION ; j++) {                                // COUNT * LINK_PER_PAGE
+            int to   = links[j].y;
+            if(to == i){
+                compute_current_element += oldp[links[j].x] / LINK_PER_PAGE; // there is 4
+            }
+        }
+        newp[i] = DAMPING * compute_current_element;
+    }
+}*/

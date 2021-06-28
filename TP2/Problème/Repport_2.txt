@@ -1,0 +1,40 @@
+Test and Practice 2 - Threads and Memories
+
+Exercice 1 : cuStopWatch.cu
+
+Exercice 2 :
+
+- starv1 : 
+In the first method we use 1 thread per block which is less efficient because each thread of each block is launched successively.
+On the second method, the distribution of threads by block is distributed which is more efficient.
+
+- starv2 : 
+Warps are sub-divisions of a block and each wrap contains treads, the gpu itself defines block wraps (in this case only) / tid pair ->
+all the threads of a wrap carried out the same job therefore half of the threads are idle and that's why the first one calls kernel is slow because half of the threads are inactive
+while the second kernel call cuts off the mooity of the threads so that there are less idle threads in and more threads that execute the if condition and the else condition.
+
+- starv3 :
+We have two methods which seem to do the same thing however the first method is slower than the second because the second uses a cache.
+This cache is a shared memory, it is a portion of memory that will be shared by all the threads of a warp. 
+And this is very useful and efficient when it has a lot of threads that want to read the same data.
+And that's why this method is faster.
+
+- starv4 : 
+The two methods do the same and compute transposed matrices.
+Kernel calls are made with the same parameters in both methods.
+What makes a method faster is surely their implementation, but I couldn't explain it.
+Assumption: the access to the value in the tables are more or less fast ??
+
+
+Problem
+The objective of this problem was to apply different filter on an image using the covulutive filter principle.
+I found this exercise complex at first sight because the data structure we had was one-dimensional 
+and it was therefore necessary to perform some mathematical operations to access the values ​​of the pixels of our image.
+And doing operations on matrices has a dimension requires mental gymnastics and that's what was complicated for me
+
+We also saw how to manage memory allocations. We retrieve our image from our host machine and allocate the necessary space to save it on our GPU in the global memory.
+
+
+Question 1:
+We choose to store the covulitive filter in constant memory, 
+because we are sure that the filter will not change over the course during the kernel execution

@@ -6,7 +6,6 @@
 // Compute sum of integers from 0 to n-1
 __global__ void trianglenumber(uint64_t* res, uint64_t n) {
     uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-    //uint64_t tid = threadIdx.x + blockIdx.x * blockDim.x;
 	if(tid < n) {
         atomicAdd(res, tid);         // *res += tid;
     }
